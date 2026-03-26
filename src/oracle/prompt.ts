@@ -56,13 +56,18 @@ export function buildOraclePrompt({ task, files = [], constraints }: OraclePromp
 }
 
 function parseOracleSections(text: string): Record<string, string> {
-  const matches = [...text.matchAll(/^##\s+(.+?)\n([\s\S]*?)(?=^##\s+.+?$|\s*$)/gm)];
+  const headingPattern = /^##\s+(.+)$/gm;
+  const headings = [...text.matchAll(headingPattern)];
   const sections: Record<string, string> = {};
 
-  for (const match of matches) {
-    const [, rawKey, rawContent] = match;
-    if (!rawKey || rawContent === undefined) continue;
-    sections[rawKey.trim().toLowerCase()] = rawContent.trim();
+  for (let i = 0; i < headings.length; i += 1) {
+    const heading = headings[i]!;
+    const nextHeading = headings[i + 1];
+    const rawKey = heading[1];
+    const start = (heading.index ?? 0) + heading[0].length + 1;
+    const end = nextHeading?.index ?? text.length;
+    if (!rawKey) continue;
+    sections[rawKey.trim().toLowerCase()] = text.slice(start, end).trim();
   }
 
   return sections;
