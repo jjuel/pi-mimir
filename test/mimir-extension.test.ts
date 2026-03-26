@@ -3,35 +3,50 @@ import test from "node:test";
 
 import mimirExtension from "../extensions/mimir/index.js";
 
-test("mimir extension registers the oracle tool with the expected public contract", () => {
-  let registeredTool: {
-    name: string;
-    label: string;
-    description: string;
-    parameters: { properties?: Record<string, unknown>; required?: string[] };
-    promptGuidelines?: string[];
-  } | undefined;
+test("mimir extension registers oracle and librarian with the expected public contracts", () => {
+  const registeredTools = new Map<
+    string,
+    {
+      name: string;
+      label: string;
+      description: string;
+      parameters: { properties?: Record<string, unknown>; required?: string[] };
+      promptGuidelines?: string[];
+    }
+  >();
 
   mimirExtension({
     registerTool(tool: unknown) {
-      registeredTool = tool as {
+      const typedTool = tool as {
         name: string;
         label: string;
         description: string;
         parameters: { properties?: Record<string, unknown>; required?: string[] };
         promptGuidelines?: string[];
       };
+      registeredTools.set(typedTool.name, typedTool);
     },
     getThinkingLevel() {
       return "high";
     },
   } as never);
 
-  assert.ok(registeredTool);
-  assert.equal(registeredTool.name, "oracle");
-  assert.equal(registeredTool.label, "Oracle");
-  assert.match(registeredTool.description, /Read-only advisory subagent/);
-  assert.deepEqual(registeredTool.parameters.required, ["task"]);
-  assert.deepEqual(Object.keys(registeredTool.parameters.properties ?? {}), ["task", "files", "constraints"]);
-  assert.equal(registeredTool.promptGuidelines?.length, 2);
+  const oracle = registeredTools.get("oracle");
+  const librarian = registeredTools.get("librarian");
+
+  assert.ok(oracle);
+  assert.equal(oracle.name, "oracle");
+  assert.equal(oracle.label, "Oracle");
+  assert.match(oracle.description, /Read-only advisory subagent/);
+  assert.deepEqual(oracle.parameters.required, ["task"]);
+  assert.deepEqual(Object.keys(oracle.parameters.properties ?? {}), ["task", "files", "constraints"]);
+  assert.equal(oracle.promptGuidelines?.length, 2);
+
+  assert.ok(librarian);
+  assert.equal(librarian.name, "librarian");
+  assert.equal(librarian.label, "Librarian");
+  assert.match(librarian.description, /Read-only research subagent/);
+  assert.deepEqual(librarian.parameters.required, ["task"]);
+  assert.deepEqual(Object.keys(librarian.parameters.properties ?? {}), ["task", "files", "repos", "constraints"]);
+  assert.equal(librarian.promptGuidelines?.length, 2);
 });
