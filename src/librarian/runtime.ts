@@ -11,6 +11,13 @@ import {
   buildLibrarianPrompt,
   normalizeLibrarianResult,
 } from "./prompt.js";
+import {
+  runLibrarianResearch,
+  type LibrarianEvidenceItem,
+  type LibrarianResearchPass,
+  type LibrarianResearchProgress,
+  type LibrarianResearchResult,
+} from "./research.js";
 
 type CreateSession = typeof createAgentSession;
 type CreateSessionOptions = NonNullable<Parameters<CreateSession>[0]>;
@@ -23,7 +30,7 @@ type LibrarianThinkingLevel = CreateSessionOptions["thinkingLevel"];
 type LibrarianAuthStorage = CreateSessionOptions["authStorage"];
 type LibrarianModelRegistry = CreateSessionOptions["modelRegistry"];
 
-export type LibrarianPhase = "starting" | "gathering" | "synthesizing";
+export type LibrarianPhase = "starting" | "researching" | "gathering" | "synthesizing";
 
 export interface LibrarianProgress {
   phase: LibrarianPhase;
@@ -42,6 +49,9 @@ export interface LibrarianResultDetails {
   limitations: string;
   citations: string[];
   degraded: boolean;
+  sources: LibrarianEvidenceItem[];
+  passes: LibrarianResearchPass[];
+  researchLimitations: string[];
 }
 
 export interface LibrarianSubagentResult {
@@ -64,6 +74,7 @@ export interface LibrarianSubagentInput {
 export interface LibrarianSubagentDeps {
   createSession?: CreateSession;
   createLoader?: (input: { cwd: string }) => Promise<ResourceLoader>;
+  createResearch?: (input: Pick<LibrarianSubagentInput, "task" | "repos" | "constraints">, deps?: { onProgress?: (progress: LibrarianResearchProgress) => void }) => Promise<LibrarianResearchResult>;
   onProgress?: (progress: LibrarianProgress) => void;
 }
 
@@ -137,13 +148,45 @@ export async function runLibrarianSubagent(
   input: LibrarianSubagentInput,
   deps: LibrarianSubagentDeps = {},
 ): Promise<LibrarianSubagentResult> {
-  const { createSession = createAgentSession, createLoader = defaultCreateLoader, onProgress } = deps;
+  const {
+    createSession = createAgentSession,
+    createLoader = defaultCreateLoader,
+    createResearch = runLibrarianResearch,
+    onProgress,
+  } = deps;
 
   if (!input.model) {
     throw new Error("Librarian requires an active model from the parent session.");
   }
 
-  const prompt = buildLibrarianPrompt(input);
+  onProgress?.({ phase: "starting", summary: "Librarian is preparing its research plan." });
+
+  const research = await createResearch(
+    {
+      task: input.task,
+      repos: input.repos || [],
+      constraints: input.constraints || "",
+    },
+    {
+      onProgress: (progress) => {
+        onProgress?.({
+          phase: "researching",
+          summary: progress.summary,
+        });
+      },
+    },
+  );
+
+  const prompt = buildLibrarianPrompt({
+    task: input.task,
+    files: input.files || [],
+    repos: input.repos || [],
+    ...(input.constraints ? { constraints: input.constraints } : {}),
+    publicEvidence: research.evidence,
+    publicPasses: research.passes,
+    researchLimitations: research.limitations,
+    degraded: research.degraded,
+  });
   const resourceLoader = await createLoader({ cwd: input.cwd });
   const options = buildLibrarianSessionOptions({
     cwd: input.cwd,
@@ -163,7 +206,7 @@ export async function runLibrarianSubagent(
       lastToolName = event.toolName;
       onProgress?.({
         phase: "gathering",
-        summary: `Librarian is gathering evidence with ${event.toolName}.`,
+        summary: `Librarian is gathering local evidence with ${event.toolName}.`,
       });
     }
     if (event.type === "message_end" && event.message && event.message.role === "assistant") {
@@ -192,8 +235,11 @@ export async function runLibrarianSubagent(
         findings: normalized.findings,
         evidence: normalized.evidence,
         limitations: normalized.limitations,
-        citations: normalized.citations,
-        degraded: normalized.degraded,
+        citations: [...new Set([...normalized.citations, ...research.evidence.map((item) => item.citation)])],
+        degraded: normalized.degraded || research.degraded,
+        sources: research.evidence,
+        passes: research.passes,
+        researchLimitations: research.limitations,
       },
     };
   } finally {
