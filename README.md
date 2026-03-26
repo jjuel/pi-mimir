@@ -5,9 +5,7 @@ Deep research tools for Pi.
 Current slices:
 - `oracle`: read-only advisory subagent with isolated in-process runtime
 - `librarian`: evidence-backed research subagent that combines local context with bounded public code and public web retrieval
-
-Planned tools:
-- `consult`
+- `consult`: unified non-mutating entrypoint with forced routing modes for oracle, librarian, both, or automatic
 
 ## Local development
 
