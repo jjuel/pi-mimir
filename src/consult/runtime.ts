@@ -10,6 +10,7 @@ import {
   type OracleResultDetails,
   type OracleSubagentResult,
 } from "../oracle/runtime.js";
+import { resolveConsultRoute } from "./routing.js";
 
 export type ConsultMode = "automatic" | "oracle" | "librarian" | "both";
 export type ConsultEffectiveMode = "oracle" | "librarian" | "both";
@@ -25,6 +26,9 @@ export interface ConsultResultDetails {
   task: string;
   mode: ConsultMode;
   effectiveMode: ConsultEffectiveMode;
+  localFirst: boolean;
+  needsRemoteResearch: boolean;
+  routingReason: string;
   filesUsed: string[];
   repoHints: string[];
   constraints: string;
@@ -71,11 +75,6 @@ function bulletList(items: string[]): string {
   return items.length === 0 ? "- None reported" : items.map((item) => `- ${item}`).join("\n");
 }
 
-function resolveEffectiveMode(mode: ConsultMode): ConsultEffectiveMode {
-  if (mode === "automatic") return "both";
-  return mode;
-}
-
 function summarizeConsultResult(args: {
   effectiveMode: ConsultEffectiveMode;
   librarian?: LibrarianResultDetails;
@@ -99,17 +98,17 @@ function summarizeConsultResult(args: {
 function buildConsultText(args: {
   mode: ConsultMode;
   effectiveMode: ConsultEffectiveMode;
+  localFirst: boolean;
+  needsRemoteResearch: boolean;
+  routingReason: string;
   specialistsUsed: Array<"librarian" | "oracle">;
   summary: string;
   librarian?: LibrarianResultDetails;
   oracle?: OracleResultDetails;
 }): string {
-  const { mode, effectiveMode, specialistsUsed, summary, librarian, oracle } = args;
+  const { mode, effectiveMode, localFirst, needsRemoteResearch, routingReason, specialistsUsed, summary, librarian, oracle } =
+    args;
   const limitations: string[] = [];
-
-  if (mode === "automatic") {
-    limitations.push("Automatic mode currently routes to the combined librarian-plus-oracle path in this slice.");
-  }
   if (librarian?.limitations) limitations.push(`Librarian: ${librarian.limitations}`);
   if (oracle?.limitations) limitations.push(`Oracle: ${oracle.limitations}`);
 
@@ -120,6 +119,9 @@ function buildConsultText(args: {
     "## Specialists Used",
     `- Requested mode: ${mode}`,
     `- Effective mode: ${effectiveMode}`,
+    `- Local-first: ${localFirst ? "yes" : "no"}`,
+    `- Remote research needed: ${needsRemoteResearch ? "yes" : "no"}`,
+    `- Routing reason: ${routingReason}`,
     ...specialistsUsed.map((specialist) => `- ${specialist}`),
   ];
 
@@ -160,11 +162,12 @@ export async function runConsultSubagent(
   const runLibrarianFn = (deps.runLibrarian ?? (runLibrarianSubagent as ConsultSubagentDeps["runLibrarian"]))!;
   const runOracleFn = (deps.runOracle ?? (runOracleSubagent as ConsultSubagentDeps["runOracle"]))!;
 
-  const mode = input.mode || "automatic";
-  const effectiveMode = resolveEffectiveMode(mode);
+  const route = resolveConsultRoute(input);
+  const mode = route.requestedMode;
+  const effectiveMode = route.effectiveMode;
 
   onProgress?.({ phase: "starting", summary: "Consult is preparing its orchestration pass." });
-  onProgress?.({ phase: "routing", summary: `Consult selected the ${effectiveMode} route.` });
+  onProgress?.({ phase: "routing", summary: `Consult selected the ${effectiveMode} route. ${route.reason}` });
 
   let librarian: LibrarianSubagentResult | undefined;
   let oracle: OracleSubagentResult | undefined;
@@ -204,6 +207,9 @@ export async function runConsultSubagent(
   const text = buildConsultText({
     mode,
     effectiveMode,
+    localFirst: route.localFirst,
+    needsRemoteResearch: route.needsRemoteResearch,
+    routingReason: route.reason,
     specialistsUsed,
     summary,
     ...(librarian ? { librarian: librarian.details } : {}),
@@ -219,6 +225,9 @@ export async function runConsultSubagent(
       task: input.task,
       mode,
       effectiveMode,
+      localFirst: route.localFirst,
+      needsRemoteResearch: route.needsRemoteResearch,
+      routingReason: route.reason,
       filesUsed: input.files || [],
       repoHints: input.repos || [],
       constraints: input.constraints || "",
