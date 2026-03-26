@@ -10,7 +10,7 @@ import {
 } from "./runtime.js";
 
 export const LibrarianParameters = Type.Object({
-  task: Type.String({ description: "What Librarian should investigate using local project context." }),
+  task: Type.String({ description: "What Librarian should investigate using local and public research." }),
   files: Type.Optional(
     Type.Array(Type.String(), {
       description: "Optional focus files for the investigation. These are hints, not strict boundaries.",
@@ -18,7 +18,7 @@ export const LibrarianParameters = Type.Object({
   ),
   repos: Type.Optional(
     Type.Array(Type.String(), {
-      description: "Optional repository hints for future remote research. Accepted in this local-only slice but not used as remote sources.",
+      description: "Optional repository hints for public code research. These are soft preferences, not a strict allowlist.",
     }),
   ),
   constraints: Type.Optional(
@@ -53,17 +53,17 @@ export function createLibrarianTool(
     name: "librarian",
     label: "Librarian",
     description:
-      "Read-only research subagent for evidence-backed investigation of the current project context.",
+      "Read-only research subagent for evidence-backed investigation across local context, public code, and public web sources.",
     promptSnippet:
-      "Use librarian for evidence-backed local research when the user wants findings with citations rather than pure advice.",
+      "Use librarian for evidence-backed research when the user wants findings with citations from local files, public repos, or public web sources.",
     promptGuidelines: [
-      "Use librarian when the task calls for grounded findings and explicit evidence from the local codebase.",
-      "Pass file hints when the user already identified likely hotspots, but do not treat them as a hard boundary.",
+      "Use librarian when the task calls for grounded findings and explicit evidence rather than pure advice.",
+      "Pass file and repo hints when the user identified likely hotspots, but treat them as soft hints rather than hard boundaries.",
     ],
     parameters: LibrarianParameters,
     async execute(_toolCallId, params, _signal, onUpdate, ctx) {
       onUpdate?.({
-        content: [{ type: "text", text: "Librarian is starting its local research pass." }],
+        content: [{ type: "text", text: "Librarian is starting its research pass." }],
         details: { phase: "starting", role: "librarian" },
       });
 

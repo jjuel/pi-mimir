@@ -26,14 +26,23 @@ test("buildLibrarianSessionOptions inherits the parent model and local read-only
   assert.deepEqual(options.tools?.map((tool) => tool.name), ["read", "grep", "find", "ls"]);
 });
 
-test("runLibrarianSubagent prompts an isolated local-only session and returns evidence details", async () => {
+test("runLibrarianSubagent combines public research with isolated local synthesis", async () => {
   const fakeMessages = [
     {
       role: "assistant",
       content: [
         {
           type: "text",
-          text: `## Findings\nThe current extension exposes oracle but not yet consult.\n\n## Evidence\n- extensions/mimir/index.ts:6 registers the oracle tool.\n- README.md:5 lists oracle as the current slice.\n\n## Limitations\nEvidence is strong for the local registration path, but this answer did not inspect future planned tools beyond the current repo state.`,
+          text: `## Findings
+The current extension exposes oracle and librarian, and the public docs confirm Pi extensions register tools from TypeScript entrypoints.
+
+## Evidence
+- extensions/mimir/index.ts:6 registers the oracle tool.
+- extensions/mimir/index.ts:12 registers the librarian tool.
+- https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/src/core/extensions/types.ts documents the extension API.
+
+## Limitations
+Evidence is sufficient for the extension surface, though public search was partial beyond the hinted repo.`,
         },
       ],
     },
@@ -44,10 +53,12 @@ test("runLibrarianSubagent prompts an isolated local-only session and returns ev
     prompt: string | null;
     options: unknown;
     disposed: boolean;
+    progress: string[];
   } = {
     prompt: null,
     options: null,
     disposed: false,
+    progress: [],
   };
 
   const createSession = async (options: unknown) => {
@@ -80,22 +91,71 @@ test("runLibrarianSubagent prompts an isolated local-only session and returns ev
       task: "Explain what tools the extension currently exposes",
       files: ["extensions/mimir/index.ts", "README.md"],
       repos: ["badlogic/pi-mono"],
-      constraints: "Use local context only.",
+      constraints: "Use local context plus public docs only.",
     },
     {
       createSession: createSession as never,
       createLoader: async () => ({ reload: async () => {} }) as never,
+      createResearch: async (_input, deps) => {
+        deps?.onProgress?.({ phase: "repo-hints", summary: "Librarian is inspecting hinted public repositories." });
+        return {
+          evidence: [
+            {
+              kind: "public-code",
+              title: "Pi extension API types",
+              location: "https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/src/core/extensions/types.ts",
+              citation: "https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/src/core/extensions/types.ts",
+              excerpt: "ExtensionAPI exposes registerTool().",
+              pass: 1,
+            },
+          ],
+          passes: [
+            {
+              pass: 1,
+              phase: "repo-hints",
+              summary: "Inspected 1 hinted public repo.",
+              queries: ["badlogic/pi-mono"],
+              evidenceCount: 1,
+            },
+          ],
+          limitations: ["Public search was partial beyond the hinted repo."],
+          degraded: false,
+          repoHintsUsed: ["badlogic/pi-mono"],
+          webQueries: ["Explain what tools the extension currently exposes"],
+          budget: {
+            maxPasses: 3,
+            maxRepoHints: 2,
+            maxCodeFilesPerRepo: 2,
+            maxDocsPages: 2,
+            maxWebQueries: 2,
+            maxResultsPerQuery: 3,
+            maxWebPages: 2,
+            maxEvidence: 8,
+          },
+        };
+      },
+      onProgress(progress) {
+        seen.progress.push(progress.summary);
+      },
     },
   );
 
   assert.match(seen.prompt ?? "", /Explain what tools the extension currently exposes/);
   assert.match(seen.prompt ?? "", /extensions\/mimir\/index.ts/);
-  assert.match(seen.prompt ?? "", /badlogic\/pi-mono/);
+  assert.match(seen.prompt ?? "", /https:\/\/github.com\/badlogic\/pi-mono\/blob\/main\/packages\/coding-agent\/src\/core\/extensions\/types.ts/);
   assert.equal((seen.options as { model: { id: string } }).model.id, "test-model");
   assert.equal((seen.options as { thinkingLevel: string }).thinkingLevel, "medium");
   assert.equal(result.details.role, "librarian");
-  assert.match(result.details.findings, /oracle/);
-  assert.deepEqual(result.details.citations, ["extensions/mimir/index.ts:6", "README.md:5"]);
-  assert.equal(result.details.degraded, false);
+  assert.match(result.details.findings, /oracle and librarian/);
+  assert.deepEqual(result.details.citations, [
+    "extensions/mimir/index.ts:6",
+    "extensions/mimir/index.ts:12",
+    "https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/src/core/extensions/types.ts",
+  ]);
+  assert.equal(result.details.degraded, true);
+  assert.equal(result.details.sources.length, 1);
+  assert.equal(result.details.passes.length, 1);
+  assert.equal(result.details.researchLimitations[0], "Public search was partial beyond the hinted repo.");
+  assert.equal(seen.progress.some((summary) => /hinted public repositories/i.test(summary)), true);
   assert.equal(seen.disposed, true);
 });

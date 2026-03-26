@@ -11,9 +11,9 @@ test("librarian tool forwards parent model context and returns evidence details"
     getThinkingLevel: () => "high",
     run: async (input, deps) => {
       calls.push(input as unknown as Record<string, unknown>);
-      deps?.onProgress?.({ phase: "synthesizing", summary: "Librarian is organizing findings." });
+      deps?.onProgress?.({ phase: "researching", summary: "Librarian is widening to public web sources." });
       return {
-        text: "## Findings\nThe oracle tool is wired through the extension entrypoint.\n\n## Evidence\n- extensions/mimir/index.ts:6 registers createOracleTool.\n\n## Limitations\nEvidence is sufficient for the current local-only question.",
+        text: "## Findings\nThe oracle tool is wired through the extension entrypoint and public docs confirm the extension contract.\n\n## Evidence\n- extensions/mimir/index.ts:6 registers createOracleTool.\n- https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/src/core/extensions/types.ts describes ExtensionAPI.\n\n## Limitations\nEvidence is sufficient for this question.",
         details: {
           role: "librarian",
           task: input.task,
@@ -21,11 +21,17 @@ test("librarian tool forwards parent model context and returns evidence details"
           repoHints: input.repos || [],
           constraints: input.constraints || "",
           model: input.model.id,
-          findings: "The oracle tool is wired through the extension entrypoint.",
+          findings: "The oracle tool is wired through the extension entrypoint and public docs confirm the extension contract.",
           evidence: "- extensions/mimir/index.ts:6 registers createOracleTool.",
-          limitations: "Evidence is sufficient for the current local-only question.",
-          citations: ["extensions/mimir/index.ts:6"],
+          limitations: "Evidence is sufficient for this question.",
+          citations: [
+            "extensions/mimir/index.ts:6",
+            "https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/src/core/extensions/types.ts",
+          ],
           degraded: false,
+          sources: [],
+          passes: [],
+          researchLimitations: [],
         },
       };
     },
@@ -37,7 +43,7 @@ test("librarian tool forwards parent model context and returns evidence details"
       task: "Trace the oracle registration path",
       files: ["extensions/mimir/index.ts"],
       repos: ["badlogic/pi-mono"],
-      constraints: "Use local context only.",
+      constraints: "Use public docs only when local evidence is insufficient.",
     },
     undefined,
     (update) => updates.push(update as unknown as Record<string, unknown>),
@@ -54,6 +60,13 @@ test("librarian tool forwards parent model context and returns evidence details"
   assert.deepEqual(calls[0]?.files, ["extensions/mimir/index.ts"]);
   assert.deepEqual(calls[0]?.repos, ["badlogic/pi-mono"]);
   assert.equal(result.details.role, "librarian");
-  assert.deepEqual((result.details as { citations: string[] }).citations, ["extensions/mimir/index.ts:6"]);
+  assert.deepEqual((result.details as { citations: string[] }).citations, [
+    "extensions/mimir/index.ts:6",
+    "https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/src/core/extensions/types.ts",
+  ]);
   assert.equal(updates.length >= 2, true);
+  assert.equal(
+    updates.some((update) => JSON.stringify(update).includes("public web sources")),
+    true,
+  );
 });
