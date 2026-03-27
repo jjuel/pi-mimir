@@ -15,6 +15,7 @@ import { resolveConsultRoute } from "./routing.js";
 export type ConsultMode = "automatic" | "oracle" | "librarian" | "both";
 export type ConsultEffectiveMode = "oracle" | "librarian" | "both";
 export type ConsultPhase = "starting" | "routing" | "librarian" | "oracle" | "finalizing";
+export type ConsultStageStatus = "skipped" | "succeeded" | "failed";
 
 export interface ConsultProgress {
   phase: ConsultPhase;
@@ -34,6 +35,13 @@ export interface ConsultResultDetails {
   constraints: string;
   model: string;
   specialistsUsed: Array<"librarian" | "oracle">;
+  stageStatus: {
+    librarian: ConsultStageStatus;
+    oracle: ConsultStageStatus;
+  };
+  stageErrors: string[];
+  compactEvidence: string[];
+  evidenceCitations: string[];
   degraded: boolean;
   partial: boolean;
   summary: string;
@@ -75,24 +83,88 @@ function bulletList(items: string[]): string {
   return items.length === 0 ? "- None reported" : items.map((item) => `- ${item}`).join("\n");
 }
 
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message) return error.message;
+  return String(error);
+}
+
 function summarizeConsultResult(args: {
   effectiveMode: ConsultEffectiveMode;
   librarian?: LibrarianResultDetails;
   oracle?: OracleResultDetails;
+  stageErrors: string[];
 }): string {
-  const { effectiveMode, librarian, oracle } = args;
+  const { effectiveMode, librarian, oracle, stageErrors } = args;
 
   if (effectiveMode === "oracle") {
-    return oracle?.conclusion || oracle?.recommendation || "Oracle completed an advisory pass.";
+    return oracle?.conclusion || oracle?.recommendation || stageErrors[0] || "Oracle completed an advisory pass.";
   }
 
   if (effectiveMode === "librarian") {
-    return librarian?.findings || "Librarian completed a research pass.";
+    return librarian?.findings || stageErrors[0] || "Librarian completed a research pass.";
   }
 
-  const librarianSummary = librarian?.findings || "Librarian completed a research pass.";
-  const oracleSummary = oracle?.conclusion || oracle?.recommendation || "Oracle completed an advisory pass.";
-  return `${librarianSummary}\n\n${oracleSummary}`;
+  if (oracle) {
+    return oracle.conclusion || oracle.recommendation || "Consult completed a synthesized advisory pass.";
+  }
+
+  if (librarian) {
+    return librarian.findings || "Consult completed a partial research pass.";
+  }
+
+  return stageErrors[0] || "Consult could not complete either specialist stage.";
+}
+
+function buildCompactEvidence(librarian?: LibrarianResultDetails): { compactEvidence: string[]; evidenceCitations: string[] } {
+  if (!librarian) return { compactEvidence: [], evidenceCitations: [] };
+
+  const evidenceLines = librarian.evidence
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("- "));
+
+  const compactEvidence = (evidenceLines.length > 0 ? evidenceLines : librarian.citations.map((citation) => `- ${citation}`)).slice(
+    0,
+    4,
+  );
+
+  return {
+    compactEvidence,
+    evidenceCitations: librarian.citations.slice(0, 8),
+  };
+}
+
+function buildOracleSynthesisTask(input: ConsultSubagentInput, librarian: LibrarianResultDetails): string {
+  const evidenceSnapshot = buildCompactEvidence(librarian).compactEvidence.join("\n") || "- No evidence bullets were captured.";
+
+  return [
+    input.task,
+    "",
+    "Use the following Librarian findings and evidence as the primary evidence base for your recommendation.",
+    "",
+    "## Librarian Findings",
+    librarian.findings || "No findings were returned.",
+    "",
+    "## Librarian Evidence Snapshot",
+    evidenceSnapshot,
+    "",
+    "## Librarian Limitations",
+    librarian.limitations || "No limitations were returned.",
+    "",
+    "Give a synthesized advisory answer that clearly distinguishes evidence-backed findings from reasoning-based recommendation.",
+  ].join("\n");
+}
+
+function buildOracleSynthesisConstraints(input: ConsultSubagentInput, librarian: LibrarianResultDetails): string {
+  const constraintParts = [input.constraints || "", "Ground the recommendation in the Librarian evidence snapshot and acknowledge evidence quality."]
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+
+  if (librarian.degraded) {
+    constraintParts.push("Remote or evidence gathering was degraded; explicitly reflect that uncertainty.");
+  }
+
+  return constraintParts.join(" ");
 }
 
 function buildConsultText(args: {
@@ -102,15 +174,38 @@ function buildConsultText(args: {
   needsRemoteResearch: boolean;
   routingReason: string;
   specialistsUsed: Array<"librarian" | "oracle">;
+  stageStatus: { librarian: ConsultStageStatus; oracle: ConsultStageStatus };
+  stageErrors: string[];
+  compactEvidence: string[];
+  degraded: boolean;
+  partial: boolean;
   summary: string;
   librarian?: LibrarianResultDetails;
   oracle?: OracleResultDetails;
 }): string {
-  const { mode, effectiveMode, localFirst, needsRemoteResearch, routingReason, specialistsUsed, summary, librarian, oracle } =
-    args;
+  const {
+    mode,
+    effectiveMode,
+    localFirst,
+    needsRemoteResearch,
+    routingReason,
+    specialistsUsed,
+    stageStatus,
+    stageErrors,
+    compactEvidence,
+    degraded,
+    partial,
+    summary,
+    librarian,
+    oracle,
+  } = args;
+
   const limitations: string[] = [];
+  if (partial) limitations.push("Consult returned a partial result because one stage of the pipeline failed or was skipped after degradation.");
+  if (degraded) limitations.push("Consult ran in degraded mode because evidence quality or one specialist stage was incomplete.");
   if (librarian?.limitations) limitations.push(`Librarian: ${librarian.limitations}`);
   if (oracle?.limitations) limitations.push(`Oracle: ${oracle.limitations}`);
+  limitations.push(...stageErrors.map((error) => `Stage error: ${error}`));
 
   const parts = [
     "## Summary",
@@ -122,10 +217,18 @@ function buildConsultText(args: {
     `- Local-first: ${localFirst ? "yes" : "no"}`,
     `- Remote research needed: ${needsRemoteResearch ? "yes" : "no"}`,
     `- Routing reason: ${routingReason}`,
+    `- Librarian status: ${stageStatus.librarian}`,
+    `- Oracle status: ${stageStatus.oracle}`,
+    `- Partial result: ${partial ? "yes" : "no"}`,
+    `- Degraded: ${degraded ? "yes" : "no"}`,
     ...specialistsUsed.map((specialist) => `- ${specialist}`),
   ];
 
-  if (librarian) {
+  if (compactEvidence.length > 0) {
+    parts.push("", "## Evidence Snapshot", compactEvidence.join("\n"));
+  }
+
+  if (librarian && effectiveMode === "librarian") {
     parts.push(
       "",
       "## Findings",
@@ -147,6 +250,17 @@ function buildConsultText(args: {
       `**Risks:** ${oracle.risks || "No risks returned."}`,
       "",
       `**Recommendation:** ${oracle.recommendation || "No recommendation returned."}`,
+    );
+  }
+
+  if (!oracle && librarian && effectiveMode === "both") {
+    parts.push(
+      "",
+      "## Findings",
+      librarian.findings || "No findings were returned.",
+      "",
+      "## Evidence",
+      librarian.evidence || "- No evidence details were returned.",
     );
   }
 
@@ -172,37 +286,79 @@ export async function runConsultSubagent(
   let librarian: LibrarianSubagentResult | undefined;
   let oracle: OracleSubagentResult | undefined;
   const specialistsUsed: Array<"librarian" | "oracle"> = [];
+  const stageErrors: string[] = [];
+  const stageStatus: ConsultResultDetails["stageStatus"] = {
+    librarian: "skipped",
+    oracle: "skipped",
+  };
 
   if (effectiveMode === "librarian" || effectiveMode === "both") {
     onProgress?.({ phase: "librarian", summary: "Consult is starting Librarian." });
-    librarian = await runLibrarianFn(input, {
-      onProgress: (progress) => {
-        onProgress?.({
-          phase: "librarian",
-          summary: `Consult → Librarian: ${progress.summary}`,
-        });
-      },
-    });
-    specialistsUsed.push("librarian");
+    try {
+      librarian = await runLibrarianFn(input, {
+        onProgress: (progress) => {
+          onProgress?.({
+            phase: "librarian",
+            summary: `Consult → Librarian: ${progress.summary}`,
+          });
+        },
+      });
+      specialistsUsed.push("librarian");
+      stageStatus.librarian = "succeeded";
+    } catch (error) {
+      stageStatus.librarian = "failed";
+      const message = `Librarian failed: ${getErrorMessage(error)}`;
+      stageErrors.push(message);
+      onProgress?.({ phase: "librarian", summary: `Consult is continuing after librarian failure. ${message}` });
+    }
   }
 
   if (effectiveMode === "oracle" || effectiveMode === "both") {
     onProgress?.({ phase: "oracle", summary: "Consult is starting Oracle." });
-    oracle = await runOracleFn(input, {
-      onProgress: (progress) => {
-        onProgress?.({
-          phase: "oracle",
-          summary: `Consult → Oracle: ${progress.summary}`,
-        });
-      },
-    });
-    specialistsUsed.push("oracle");
+
+    const oracleInput: ConsultSubagentInput = librarian
+      ? {
+          ...input,
+          task: buildOracleSynthesisTask(input, librarian.details),
+          constraints: buildOracleSynthesisConstraints(input, librarian.details),
+        }
+      : stageStatus.librarian === "failed"
+        ? {
+            ...input,
+            constraints: [input.constraints || "", "Proceed without librarian evidence and clearly label the result as partial."].join(" ").trim(),
+          }
+        : input;
+
+    try {
+      oracle = await runOracleFn(oracleInput, {
+        onProgress: (progress) => {
+          onProgress?.({
+            phase: "oracle",
+            summary: `Consult → Oracle: ${progress.summary}`,
+          });
+        },
+      });
+      specialistsUsed.push("oracle");
+      stageStatus.oracle = "succeeded";
+    } catch (error) {
+      stageStatus.oracle = "failed";
+      const message = `Oracle failed: ${getErrorMessage(error)}`;
+      stageErrors.push(message);
+      onProgress?.({ phase: "oracle", summary: `Consult is continuing after oracle failure. ${message}` });
+    }
   }
+
+  const { compactEvidence, evidenceCitations } = buildCompactEvidence(librarian?.details);
+  const partial =
+    stageErrors.length > 0 ||
+    (effectiveMode === "both" && (stageStatus.librarian !== "succeeded" || stageStatus.oracle !== "succeeded"));
+  const degraded = partial || Boolean(librarian?.details.degraded || oracle?.details.degraded);
 
   const summary = summarizeConsultResult({
     effectiveMode,
     ...(librarian ? { librarian: librarian.details } : {}),
     ...(oracle ? { oracle: oracle.details } : {}),
+    stageErrors,
   });
   const text = buildConsultText({
     mode,
@@ -211,6 +367,11 @@ export async function runConsultSubagent(
     needsRemoteResearch: route.needsRemoteResearch,
     routingReason: route.reason,
     specialistsUsed,
+    stageStatus,
+    stageErrors,
+    compactEvidence,
+    degraded,
+    partial,
     summary,
     ...(librarian ? { librarian: librarian.details } : {}),
     ...(oracle ? { oracle: oracle.details } : {}),
@@ -233,8 +394,12 @@ export async function runConsultSubagent(
       constraints: input.constraints || "",
       model: input.model.id,
       specialistsUsed,
-      degraded: Boolean(librarian?.details.degraded || oracle?.details.degraded),
-      partial: false,
+      stageStatus,
+      stageErrors,
+      compactEvidence,
+      evidenceCitations,
+      degraded,
+      partial,
       summary,
       ...(librarian ? { librarian: librarian.details } : {}),
       ...(oracle ? { oracle: oracle.details } : {}),
