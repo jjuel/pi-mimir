@@ -11,7 +11,7 @@ test("runConsultSubagent automatic mode routes through librarian then oracle and
     {
       cwd: "/tmp/project",
       model: { id: "test-model" },
-      task: "Investigate the current extension surface",
+      task: "Investigate the current extension surface and recommend the best default entrypoint.",
       files: ["extensions/mimir/index.ts"],
       repos: ["badlogic/pi-mono"],
       constraints: "Analysis only.",
@@ -31,7 +31,8 @@ test("runConsultSubagent automatic mode routes through librarian then oracle and
             constraints: "Analysis only.",
             model: "test-model",
             findings: "The extension currently registers oracle, librarian, and consult.",
-            evidence: "- extensions/mimir/index.ts:6 registers oracle.\n- extensions/mimir/index.ts:12 registers librarian.\n- extensions/mimir/index.ts:18 registers consult.",
+            evidence:
+              "- extensions/mimir/index.ts:6 registers oracle.\n- extensions/mimir/index.ts:12 registers librarian.\n- extensions/mimir/index.ts:18 registers consult.",
             limitations: "Remote evidence was not needed for this focused question.",
             citations: ["extensions/mimir/index.ts:6", "extensions/mimir/index.ts:12", "extensions/mimir/index.ts:18"],
             degraded: false,
@@ -70,16 +71,72 @@ test("runConsultSubagent automatic mode routes through librarian then oracle and
   assert.deepEqual(calls, ["librarian", "oracle"]);
   assert.equal(result.details.mode, "automatic");
   assert.equal(result.details.effectiveMode, "both");
+  assert.equal(result.details.localFirst, false);
+  assert.equal(result.details.needsRemoteResearch, true);
+  assert.match(result.details.routingReason, /public research/i);
   assert.deepEqual(result.details.specialistsUsed, ["librarian", "oracle"]);
   assert.equal(result.details.partial, false);
   assert.match(result.text, /## Summary/);
   assert.match(result.text, /## Specialists Used/);
   assert.match(result.text, /Requested mode: automatic/);
   assert.match(result.text, /Effective mode: both/);
+  assert.match(result.text, /Local-first: no/);
+  assert.match(result.text, /Remote research needed: yes/);
   assert.match(result.text, /## Findings/);
   assert.match(result.text, /## Advice/);
   assert.equal(progress.some((entry) => /Consult → Librarian/.test(entry)), true);
   assert.equal(progress.some((entry) => /Consult → Oracle/.test(entry)), true);
+});
+
+test("runConsultSubagent chooses local-first librarian for evidence-focused automatic tasks", async () => {
+  let librarianCalls = 0;
+  let oracleCalls = 0;
+
+  const result = await runConsultSubagent(
+    {
+      cwd: "/tmp/project",
+      model: { id: "test-model" },
+      task: "Trace how consult is registered and cite the current code paths.",
+      files: ["extensions/mimir/index.ts"],
+      mode: "automatic",
+    },
+    {
+      runLibrarian: async () => {
+        librarianCalls += 1;
+        return {
+          text: "librarian text",
+          details: {
+            role: "librarian",
+            task: "Trace how consult is registered and cite the current code paths.",
+            filesUsed: ["extensions/mimir/index.ts"],
+            repoHints: [],
+            constraints: "",
+            model: "test-model",
+            findings: "Consult is registered in the extension entrypoint.",
+            evidence: "- extensions/mimir/index.ts:1 imports the consult tool.\n- extensions/mimir/index.ts:18 registers consult.",
+            limitations: "Local evidence was sufficient.",
+            citations: ["extensions/mimir/index.ts:1", "extensions/mimir/index.ts:18"],
+            degraded: false,
+            sources: [],
+            passes: [],
+            researchLimitations: [],
+          },
+        };
+      },
+      runOracle: async () => {
+        oracleCalls += 1;
+        throw new Error("should not be called");
+      },
+    },
+  );
+
+  assert.equal(result.details.effectiveMode, "librarian");
+  assert.equal(result.details.localFirst, true);
+  assert.equal(result.details.needsRemoteResearch, false);
+  assert.match(result.details.routingReason, /evidence-first/i);
+  assert.deepEqual(result.details.specialistsUsed, ["librarian"]);
+  assert.equal(librarianCalls, 1);
+  assert.equal(oracleCalls, 0);
 });
 
 test("runConsultSubagent respects forced mode overrides", async () => {
