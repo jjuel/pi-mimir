@@ -1,4 +1,4 @@
-import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI, ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { Type, type Static } from "@sinclair/typebox";
 
 import {
@@ -8,6 +8,7 @@ import {
   type OracleSubagentInput,
   type OracleSubagentResult,
 } from "./runtime.js";
+import { createSubagentSlashCommand } from "../slash-command.js";
 
 export const OracleParameters = Type.Object({
   task: Type.String({ description: "What Oracle should investigate or advise on." }),
@@ -34,6 +35,10 @@ export type OracleToolDetails =
 interface CreateOracleToolDeps {
   run?: (input: OracleSubagentInput, deps?: { onProgress?: (progress: OracleProgress) => void }) => Promise<OracleSubagentResult>;
   getThinkingLevel?: () => OracleSubagentInput["thinkingLevel"];
+}
+
+interface CreateOracleCommandDeps extends CreateOracleToolDeps {
+  sendMessage: ExtensionAPI["sendMessage"];
 }
 
 export function createOracleTool(
@@ -90,4 +95,28 @@ export function createOracleTool(
       };
     },
   };
+}
+
+export function createOracleCommand(
+  deps: CreateOracleCommandDeps,
+): Omit<import("@mariozechner/pi-coding-agent").RegisteredCommand, "name" | "sourceInfo"> {
+  const { run = runOracleSubagent, getThinkingLevel = () => "medium", sendMessage } = deps;
+
+  return createSubagentSlashCommand({
+    name: "oracle",
+    description: "Run Oracle directly as a slash command.",
+    usage: "/oracle <task>",
+    sendMessage,
+    run,
+    buildInput: (task, ctx) => ({
+      cwd: ctx.cwd,
+      model: ctx.model!,
+      thinkingLevel: getThinkingLevel(),
+      authStorage: ctx.modelRegistry?.authStorage,
+      modelRegistry: ctx.modelRegistry,
+      task,
+      files: [],
+      constraints: "",
+    }),
+  });
 }

@@ -1,4 +1,4 @@
-import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI, ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { Type, type Static } from "@sinclair/typebox";
 
 import {
@@ -8,6 +8,7 @@ import {
   type LibrarianSubagentInput,
   type LibrarianSubagentResult,
 } from "./runtime.js";
+import { createSubagentSlashCommand } from "../slash-command.js";
 
 export const LibrarianParameters = Type.Object({
   task: Type.String({ description: "What Librarian should investigate using local and public research." }),
@@ -42,6 +43,10 @@ interface CreateLibrarianToolDeps {
     deps?: { onProgress?: (progress: LibrarianProgress) => void },
   ) => Promise<LibrarianSubagentResult>;
   getThinkingLevel?: () => LibrarianSubagentInput["thinkingLevel"];
+}
+
+interface CreateLibrarianCommandDeps extends CreateLibrarianToolDeps {
+  sendMessage: ExtensionAPI["sendMessage"];
 }
 
 export function createLibrarianTool(
@@ -99,4 +104,29 @@ export function createLibrarianTool(
       };
     },
   };
+}
+
+export function createLibrarianCommand(
+  deps: CreateLibrarianCommandDeps,
+): Omit<import("@mariozechner/pi-coding-agent").RegisteredCommand, "name" | "sourceInfo"> {
+  const { run = runLibrarianSubagent, getThinkingLevel = () => "medium", sendMessage } = deps;
+
+  return createSubagentSlashCommand({
+    name: "librarian",
+    description: "Run Librarian directly as a slash command.",
+    usage: "/librarian <task>",
+    sendMessage,
+    run,
+    buildInput: (task, ctx) => ({
+      cwd: ctx.cwd,
+      model: ctx.model!,
+      thinkingLevel: getThinkingLevel(),
+      authStorage: ctx.modelRegistry?.authStorage,
+      modelRegistry: ctx.modelRegistry,
+      task,
+      files: [],
+      repos: [],
+      constraints: "",
+    }),
+  });
 }

@@ -1,4 +1,4 @@
-import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI, ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { StringEnum } from "@mariozechner/pi-ai";
 import { Type, type Static } from "@sinclair/typebox";
 
@@ -10,6 +10,7 @@ import {
   type ConsultSubagentInput,
   type ConsultSubagentResult,
 } from "./runtime.js";
+import { createSubagentSlashCommand } from "../slash-command.js";
 
 export const ConsultParameters = Type.Object({
   task: Type.String({ description: "What Consult should investigate and answer." }),
@@ -49,6 +50,10 @@ interface CreateConsultToolDeps {
     deps?: { onProgress?: (progress: ConsultProgress) => void },
   ) => Promise<ConsultSubagentResult>;
   getThinkingLevel?: () => ConsultSubagentInput["thinkingLevel"];
+}
+
+interface CreateConsultCommandDeps extends CreateConsultToolDeps {
+  sendMessage: ExtensionAPI["sendMessage"];
 }
 
 export function createConsultTool(
@@ -108,4 +113,34 @@ export function createConsultTool(
       };
     },
   };
+}
+
+export function createConsultCommand(
+  deps: CreateConsultCommandDeps,
+): Omit<import("@mariozechner/pi-coding-agent").RegisteredCommand, "name" | "sourceInfo"> {
+  const { run = runConsultSubagent, getThinkingLevel = () => "medium", sendMessage } = deps;
+
+  return createSubagentSlashCommand({
+    name: "consult",
+    description: "Run Consult directly as a slash command.",
+    usage: "/consult <task>",
+    sendMessage,
+    run,
+    buildInput: (task, ctx) => {
+      const thinkingLevel = getThinkingLevel();
+
+      return {
+        cwd: ctx.cwd,
+        model: ctx.model!,
+        ...(thinkingLevel ? { thinkingLevel } : {}),
+        ...(ctx.modelRegistry?.authStorage ? { authStorage: ctx.modelRegistry.authStorage } : {}),
+        ...(ctx.modelRegistry ? { modelRegistry: ctx.modelRegistry } : {}),
+        task,
+        files: [],
+        repos: [],
+        constraints: "",
+        mode: "automatic" as const,
+      };
+    },
+  });
 }
