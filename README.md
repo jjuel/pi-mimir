@@ -16,19 +16,19 @@ For now, install `pi-mimir` from git rather than npm.
 Install globally for all projects:
 
 ```bash
-pi install git:github.com/<owner>/pi-mimir@v0.1.0
+pi install git:github.com/jjuel/pi-mimir@v0.1.0
 ```
 
 Install only for the current project:
 
 ```bash
-pi install -l git:github.com/<owner>/pi-mimir@v0.1.0
+pi install -l git:github.com/jjuel/pi-mimir@v0.1.0
 ```
 
 If you use SSH for GitHub access:
 
 ```bash
-pi install git:git@github.com:<owner>/pi-mimir@v0.1.0
+pi install git:git@github.com:jjuel/pi-mimir@v0.1.0
 ```
 
 You can inspect installed packages with:
