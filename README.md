@@ -7,6 +7,50 @@ Current slices:
 - `librarian`: evidence-backed research subagent that combines local context with bounded public code and public web retrieval, plus `/librarian`
 - `consult`: unified non-mutating entrypoint with deterministic routing, librarian-first synthesis, preserved evidence snapshots, partial-result handling, and `/consult`
 
+## Installation
+
+For now, install `pi-mimir` from git rather than npm.
+
+### Install from GitHub
+
+Install globally for all projects:
+
+```bash
+pi install git:github.com/<owner>/pi-mimir@v0.1.0
+```
+
+Install only for the current project:
+
+```bash
+pi install -l git:github.com/<owner>/pi-mimir@v0.1.0
+```
+
+If you use SSH for GitHub access:
+
+```bash
+pi install git:git@github.com:<owner>/pi-mimir@v0.1.0
+```
+
+You can inspect installed packages with:
+
+```bash
+pi list
+```
+
+### Local path install
+
+To install directly from a local checkout:
+
+```bash
+pi install /absolute/path/to/pi-mimir
+```
+
+Or for the current project only:
+
+```bash
+pi install -l .
+```
+
 ## Local development
 
 Typecheck and run tests:
@@ -21,7 +65,7 @@ Run only tests:
 npm test
 ```
 
-Load the package in Pi from the repo root:
+Load the package in Pi from the repo root without installing it permanently:
 
 ```bash
 pi -e .
